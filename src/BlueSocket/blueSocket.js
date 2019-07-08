@@ -29,7 +29,7 @@ class Utils {
     }
     log() {
         if (this.opts.logging) {
-
+            
             console.log(arguments)
         }
     }
@@ -273,6 +273,7 @@ class BlueSocket extends Utils {
         let event = JSON.parse(message)
         this.wss.clients.forEach((client) => {
             let userInfo = client.userInfo;
+            event.userInfo = {...userInfo};
             if (userInfo.sessionId && userInfo.sessionId === event.sessionId) {
                 this.sendParsed(client, event)
             }
