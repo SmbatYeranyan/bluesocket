@@ -102,4 +102,4 @@ class FireSock {
         }
     }
 }
-export default FireSock;
+module.exports = FireSock;

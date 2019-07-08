@@ -1,5 +1,5 @@
-import FireSock from './webClient.js';
-let fs = new FireSock();
+import blueSocket from 'index.js';
+let fs = new blueSocket.FireSock();
 fs.connect({ host: `ws://localhost:${process.argv[2]}`, reconnect: true }).then(() => {
 
 });

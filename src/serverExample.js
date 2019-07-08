@@ -1,12 +1,12 @@
-const BlueSocket = require("./blueSocket");
+const BlueSocket = require("./index").BlueSockets;
 
 const fireSock = new BlueSocket({
     logging: true, 
     port: parseInt(process.argv[2]),
     redis: {
-        host: 'XXXXXXXXX', // The redis's server ip 
+        host: 'XXXXXX', // The redis's server ip 
         port: 'XXXX',
-        auth_pass: 'dXXXXXXXXXX'
+        auth_pass: 'XXX'
     }
 });
 

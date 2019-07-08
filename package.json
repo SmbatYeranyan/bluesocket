@@ -4,6 +4,7 @@
   "description": "distributed websocket library",
   "author": "Smbat Yeranyan",
   "license": "MIT",
+  "main":"src/index.js",
   "engines": {
     "node": ">=8.0.0",
     "npm": ">=3.8"
