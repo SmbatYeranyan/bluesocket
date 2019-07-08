@@ -1,5 +1,6 @@
 
-const WebSocket = require('ws');
+//let WebSocket = require('ws');
+
 class FireSock {
     constructor() {
         this._incomingMessages = this._incomingMessages.bind(this)
@@ -24,20 +25,20 @@ class FireSock {
                 this.options = { ...options };
                 let ws = new WebSocket(this.options.host);
 
-                ws.on('open', () => {
-                    ws.on('message', this._incomingMessages);
-                    ws.on('close', this._handleDisconnect)
+                ws.onopoen = () => {
+                    ws.onmessage =  this._incomingMessages;
+                    ws.onclose = this._handleDisconnect
                     this.ws = ws;
                     this.connected = true;
                     this._heartBeatManagement();
                     //  this._eventHandler({ eventName: "connected" })
                     res();
-                });
-                ws.on('error', (e) => {
+                };
+                ws.onerror = (e) => {
                     console.log('WS err', e)
                     this.connected = false;
                     this._handleDisconnect();
-                });
+                };
                 
             } catch (e) {
                 this.connected = false;
