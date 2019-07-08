@@ -19,6 +19,14 @@ class Utils {
         }
         ws.send(JSON.stringify(eventObj))
     }
+    setUserInfo(ws,ob){
+       
+        Object.keys(ob).forEach((key)=>{
+            ws.userInfo[key] = ob[key]
+
+        })
+    
+    }
     log() {
         if (this.opts.logging) {
 
@@ -132,7 +140,7 @@ class BlueSocket extends Utils {
         this.log("starting wss service")
 
     }
-
+    
     _handleIncomingSocketCommunication(ws) {
         ws.on('message', (message) => {
             this.log(ws.id)
