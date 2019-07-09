@@ -379,6 +379,7 @@ class BlueSocket extends Utils {
     }
 
     getSessionMeta(sessionId) {
+        let {pub} = this;
         return new Promoise((resolve, reject) => {
             pub.get(`syncSessions-${sessionId}`, (e, data) => {
                 try {
