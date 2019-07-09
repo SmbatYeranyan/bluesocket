@@ -5,6 +5,7 @@ class FireSock {
     constructor() {
         this._incomingMessages = this._incomingMessages.bind(this)
         this._handleDisconnect = this._handleDisconnect.bind(this)
+        this.emit = this.emit.bind(this)
         this.events = {};
         this.options = {}
         this.connected = false
@@ -20,48 +21,52 @@ class FireSock {
     }
     connect(options) {
         return new Promise((res, rej) => {
-            try {
+            if (this.ws) {
 
-                this.options = { ...options };
-                let ws = new WebSocket(this.options.host);
+                this.ws.onmessage = null
+                this.ws.onopoen = null
+                this.ws.onclose = null
+                this.ws = null;
+            }
+            this.options = { ...options };
+            let ws = new WebSocket(this.options.host);
 
-                ws.onopoen = () => {
-                    ws.onmessage =  this._incomingMessages;
-                    ws.onclose = this._handleDisconnect
-                    this.ws = ws;
-                    this.connected = true;
-                    this._heartBeatManagement();
-                    //  this._eventHandler({ eventName: "connected" })
-                    res();
-                };
-                ws.onerror = (e) => {
-                    console.log('WS err', e)
-                    this.connected = false;
-                    this._handleDisconnect();
-                };
-                
-            } catch (e) {
+            ws.onmessage = this._incomingMessages;
+            ws.onclose = this._handleDisconnect;
+            ws.onopoen = () => {
+                this.ws = ws;
+                this.connected = true;
+                this._heartBeatManagement();
+                //  this._eventHandler({ eventName: "connected" })
+                res();
+            };
+            ws.onerror = (e) => {
+                console.log('WS err', e)
                 this.connected = false;
                 this._handleDisconnect();
-            }
+            };
+
+            this.ws = ws;
+
         })
     }
 
-    _heartBeatManagement(){
+    _heartBeatManagement() {
         if (this._hearBeat) clearInterval(this._hearBeat);
-        this._hearBeat = setInterval(()=>{
-          //  this.ws.send("hb");
+        this._hearBeat = setInterval(() => {
+            //  this.ws.send("hb");
         }, 1000)
     }
     _incomingMessages(data) {
+        data = data.data
         try {
             if (data && JSON.parse(data)) {
                 data = JSON.parse(data);
             }
-          //  console.log(data)
-            this._eventHandler(data)
+            // console.log(data)
+            this._eventHandler({ ...data })
         } catch (e) {
-
+            console.error(e)
         }
 
     }
@@ -94,7 +99,6 @@ class FireSock {
         function retry() {
             if (this.ws.readyState === 1) {
                 this.ws.send(event)
-
             } else {
                 setTimeout(() => {
                     retry();
@@ -103,4 +107,5 @@ class FireSock {
         }
     }
 }
-module.exports = FireSock;
+//module.exports = FireSock;
+export default FireSock;

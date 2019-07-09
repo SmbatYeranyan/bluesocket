@@ -29,8 +29,11 @@ class Utils {
     }
     log() {
         if (this.opts.logging) {
-
-            console.log(arguments)
+            let out ="";
+            Object.keys(arguments).forEach((k)=>{
+                out = `${out} ${arguments[k]}`
+            })
+            console.log(out)
         }
     }
 }
@@ -188,11 +191,11 @@ class BlueSocket extends Utils {
         }
     }
 
-    broadcastToSession(eventName, eventObj, ws) {
-        this.publishToRedis(eventName, eventObj, false, ws)
+    broadcastToSession(eventName, eventObj, ws, directId) {
+        this.publishToRedis(eventName, eventObj, false, ws, directId)
     }
 
-    publishToRedis(event, obj, isInternal = false, ws) {
+    publishToRedis(event, obj, isInternal = false, ws,directId) {
         let { pub } = this;
         return new Promise((r) => {
 
@@ -203,7 +206,14 @@ class BlueSocket extends Utils {
             }
             if (ws) {
                 eventObj.userId = ws.id;
+                eventObj.userInfo = ws.userInfo;
                 eventObj.sessionId = ws.userInfo.sessionId;
+            }
+            if (directId){
+                eventObj.userId ="SERVER";
+                eventObj.userInfo = {user:"SERVER"};
+                eventObj.sessionId = directId
+
             }
             pub.publish(`firesockets-${isInternal ? 'internal' : 'events'}-${id}`, JSON.stringify(eventObj), () => {
                 r();
@@ -273,7 +283,7 @@ class BlueSocket extends Utils {
         let event = JSON.parse(message)
         this.wss.clients.forEach((client) => {
             let userInfo = client.userInfo;
-            event.userInfo = { ...userInfo };
+          //  event.userInfo = { ...userInfo };
             if (userInfo.sessionId && userInfo.sessionId === event.sessionId) {
                 this.sendParsed(client, event)
             }
@@ -380,7 +390,8 @@ class BlueSocket extends Utils {
 
     getSessionMeta(sessionId) {
         let {pub} = this;
-        return new Promoise((resolve, reject) => {
+     
+        return new Promise((resolve, reject) => {
             pub.get(`syncSessions-${sessionId}`, (e, data) => {
                 try {
                     if (data && JSON.parse(data)) {
@@ -416,18 +427,21 @@ class BlueSocket extends Utils {
                     } catch (e) {
 
                     }
-                    if (data) {
-                        let update = { ...data }
-                        Object.keys(metaUpdate).forEach((key) => {
-                            update.metaData[key] = metaUpdate[key]
-
-                        })
-                        this.log("session update", update)
-                        pub.set(`syncSessions-${sessionId}`, JSON.stringify(update), 'EX', 60 * 60 * 24, () => {
-                            this.broadcastToSession("sessionInfo", { ...update }, { id: "SERVER", userInfo: { sessionId: sessionId } })
-
-                        })
+                    if (!data) {
+                        data = {
+                            metaData:{}
+                        }
                     }
+                    let update = { ...data }
+                    Object.keys(metaUpdate).forEach((key) => {
+                        update.metaData[key] = metaUpdate[key]
+
+                    })
+                    this.log("session update", update)
+                    pub.set(`syncSessions-${sessionId}`, JSON.stringify(update), 'EX', 60 * 60 * 24, () => {
+                      //  this.broadcastToSession("sessionInfo", { ...update }, { id: "SERVER", userInfo: { sessionId: sessionId } })
+
+                    })
 
 
                 });
