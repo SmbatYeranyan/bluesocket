@@ -19,17 +19,17 @@ class Utils {
         }
         ws.send(JSON.stringify(eventObj))
     }
-    setUserInfo(ws,ob){
-       
-        Object.keys(ob).forEach((key)=>{
+    setUserInfo(ws, ob) {
+
+        Object.keys(ob).forEach((key) => {
             ws.userInfo[key] = ob[key]
 
         })
-    
+
     }
     log() {
         if (this.opts.logging) {
-            
+
             console.log(arguments)
         }
     }
@@ -140,7 +140,7 @@ class BlueSocket extends Utils {
         this.log("starting wss service")
 
     }
-    
+
     _handleIncomingSocketCommunication(ws) {
         ws.on('message', (message) => {
             this.log(ws.id)
@@ -273,7 +273,7 @@ class BlueSocket extends Utils {
         let event = JSON.parse(message)
         this.wss.clients.forEach((client) => {
             let userInfo = client.userInfo;
-            event.userInfo = {...userInfo};
+            event.userInfo = { ...userInfo };
             if (userInfo.sessionId && userInfo.sessionId === event.sessionId) {
                 this.sendParsed(client, event)
             }
@@ -378,6 +378,26 @@ class BlueSocket extends Utils {
 
     }
 
+    getSessionMeta(sessionId) {
+        return new Promoise((resolve, reject) => {
+            pub.get(`syncSessions-${sessionId}`, (e, data) => {
+                try {
+                    if (data && JSON.parse(data)) {
+                        data = JSON.parse(data);
+                    }
+                } catch (e) {
+
+                }
+                if (data) {
+                    let update = { ...data }
+
+                    resolve(update)
+                }
+
+
+            });
+        })
+    }
     updateSessionMeta(ws, metaData) {
         this._updateSessionInfoRedis(ws.userInfo.sessionId).metaData(
             metaData
