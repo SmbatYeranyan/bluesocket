@@ -1,6 +1,6 @@
 {
   "name": "bluesockets",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "distributed websocket library",
   "author": "Smbat Yeranyan",
   "license": "MIT",
