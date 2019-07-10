@@ -1,8 +1,11 @@
+import { resolve } from "url";
 
 //let WebSocket = require('ws');
 
 class FireSock {
     constructor() {
+        this.connect = this.connect.bind(this)
+        this.close = this.close.bind(this)
         this._incomingMessages = this._incomingMessages.bind(this)
         this._handleDisconnect = this._handleDisconnect.bind(this)
         this.emit = this.emit.bind(this)
@@ -21,37 +24,61 @@ class FireSock {
     }
     connect(options) {
         return new Promise((res, rej) => {
-            if (this.ws) {
 
-                this.ws.onmessage = null
-                this.ws.onopoen = null
-                this.ws.onclose = null
-                this.ws = null;
-            }
             this.options = { ...options };
-            let ws = new WebSocket(this.options.host);
+            this.close().then(() => {
+                this.ws = new WebSocket(this.options.host);
 
-            ws.onmessage = this._incomingMessages;
-            ws.onclose = this._handleDisconnect;
-            ws.onopoen = () => {
-                this.ws = ws;
-                this.connected = true;
-                this._heartBeatManagement();
-                //  this._eventHandler({ eventName: "connected" })
-                res();
-            };
-            ws.onerror = (e) => {
-                console.log('WS err', e)
-                this.connected = false;
-                this._handleDisconnect();
-            };
+                this.ws.onmessage = this._incomingMessages;
+                this.ws.onclose = this._handleDisconnect;
+                this.ws.onopoen = () => {
+                    //  this.ws = ws;
+                    this.connected = true;
 
-            this.ws = ws;
+                    this._heartBeatManagement();
+                    //  this._eventHandler({ eventName: "connected" })
+                    res();
+                };
+                this.ws.onerror = (e) => {
+                    console.log('WS err', e)
+                    this.connected = false;
+                    this.ws.onmessage = null;
+                    this.ws.onclose = null
+                    this.ws.onopoen = null
+                    this.ws.close();
+                    this.ws = null
+                    this._handleDisconnect();
+                };
+                console.log(this.ws)
+                //  this.ws = ws;
+                window.syncWs = this.ws;
+            });
 
         })
     }
+    close() {
+        return new Promise((resolve) => {
+            if (window.syncWs) {
+                console.log("CLOSING SOCKET", window.syncWs)
 
+                this.connected = false;
+                window.syncWs.onmessage = function () { };
+                window.syncWs.onerror = function () { };
+                window.syncWs.onclose = function () { }
+                window.syncWs.onopoen = function () { }
+                window.syncWs.close();
+
+            }
+            // /this.ws = null
+            setTimeout(() => {
+                resolve()
+
+            }, 100)
+        })
+
+    }
     _heartBeatManagement() {
+
         if (this._hearBeat) clearInterval(this._hearBeat);
         this._hearBeat = setInterval(() => {
             //  this.ws.send("hb");

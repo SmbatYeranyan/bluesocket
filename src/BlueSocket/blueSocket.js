@@ -281,7 +281,10 @@ class BlueSocket extends Utils {
                 this.wss.clients.forEach((client) => {
                     this.log(client.userInfo.sessionId)
                     if (client.userInfo.sessionId == event.eventBody.sessionId) {
-                        users.push({ ...client.userInfo })
+                        if (client.readyState == 1){
+
+                            users.push({ ...client.userInfo })
+                        }
                     }
                 })
                 this.publishToRedis("usersInMyNode", { nodeId: this.nodeId, users }, true)
