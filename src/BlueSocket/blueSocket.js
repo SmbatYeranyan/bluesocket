@@ -29,8 +29,8 @@ class Utils {
     }
     log() {
         if (this.opts.logging) {
-            let out ="";
-            Object.keys(arguments).forEach((k)=>{
+            let out = "";
+            Object.keys(arguments).forEach((k) => {
                 out = `${out} ${arguments[k]}`
             })
             console.log(out)
@@ -44,16 +44,21 @@ class BlueSocket extends Utils {
         let defaults = {
             logging: true
         }
+
         this.nodeId = crypto.randomBytes(7).toString("hex");
         this._eventLists = {};
         this.state = {
+            opperateAsMaster: false,
             nodeCluster: {},
-            fetchingNodes: false,
             fetchedNodes: {},
-            currentClients: {}
+            fetchedSessions: {},
+            currentClients: {},
+            userStatesRequests:{queue:[]}
         }
         this.opts = { ...opts, defaults };
-
+        if (this.opts.masterOnly) {
+            this.state.opperateAsMaster = true;
+        }
         this._startListener(this.opts.port);
         this._setupRedis();
     }
@@ -87,8 +92,9 @@ class BlueSocket extends Utils {
     }
 
     _startListener(port) {
+        if (this.state.opperateAsMaster) return;
         this.log(port)
-        let wss = new WebSocket.Server({server: this.opts.httpServer});
+        let wss = new WebSocket.Server({ server: this.opts.httpServer });
 
         wss.on('connection', async (ws) => {
             let userId = crypto.randomBytes(16).toString("hex");
@@ -174,7 +180,7 @@ class BlueSocket extends Utils {
         this.publishToRedis(eventName, eventObj, false, ws, directId)
     }
 
-    publishToRedis(event, obj, isInternal = false, ws,directId) {
+    publishToRedis(event, obj, isInternal = false, ws, directId) {
         let { pub } = this;
         return new Promise((r) => {
 
@@ -188,9 +194,9 @@ class BlueSocket extends Utils {
                 eventObj.userInfo = ws.userInfo;
                 eventObj.sessionId = ws.userInfo.sessionId;
             }
-            if (directId){
-                eventObj.userId ="SERVER";
-                eventObj.userInfo = {user:"SERVER"};
+            if (directId) {
+                eventObj.userId = "SERVER";
+                eventObj.userInfo = { user: "SERVER" };
                 eventObj.sessionId = directId
 
             }
@@ -211,20 +217,28 @@ class BlueSocket extends Utils {
         }
 
 
-        this.nodeConnectionHeartbeatInterval = setInterval(() => {
-            pub.publish(`firesockets-nodes-${nodeId}`, JSON.stringify({ nodeId }), () => {
+        if (!this.state.opperateAsMaster) {
+            this.nodeConnectionHeartbeatInterval = setInterval(() => {
+                pub.publish(`firesockets-nodes-${nodeId}`, JSON.stringify({ nodeId, ts: new Date().getTime() }), () => {
 
-            })
-        }, 5000)
-        this.clusterBeats = setInterval(() => {
-            Object.keys(this.state.nodeCluster).forEach((node) => {
-                if (this.state.nodeCluster[node] > new Date().getTime() - 20000) {
+                })
+            }, 5000)
+        }
+        if (this.state.opperateAsMaster) {
 
-                } else {
-                    delete this.state.nodeCluster[node];
-                }
-            })
-        }, 20000)
+            this.clusterBeats = setInterval(() => {
+                console.log("master: node starting")
+                console.log("master: nodes right now: ", Object.keys(this.state.nodeCluster).length)
+                Object.keys(this.state.nodeCluster).forEach((node) => {
+                    console.log("master: node states ", this.state.nodeCluster[node])
+                    if (this.state.nodeCluster[node] > new Date().getTime() - 20000) {
+
+                    } else {
+                        delete this.state.nodeCluster[node];
+                    }
+                })
+            }, 10000)
+        }
 
     }
 
@@ -258,48 +272,134 @@ class BlueSocket extends Utils {
         this.state.nodeCluster[event.nodeId] = new Date().getTime();
     }
     handleRedisEventSubscriptions(channel, pattern, message) {
-        this.log("sub channel " + pattern + ": " + message);
+        let { opperateAsMaster } = this.state;
+        //this.log("sub channel " + pattern + ": " + message);
         let event = JSON.parse(message)
-        this.wss.clients.forEach((client) => {
-            let userInfo = client.userInfo;
-          //  event.userInfo = { ...userInfo };
-            if (userInfo.sessionId && userInfo.sessionId === event.sessionId) {
-                this.sendParsed(client, event)
-            }
-        })
-        switch (event.eventName) {
-            case "nodeConnected":
-                if (event.eventBody.nodeId !== this.nodeId) {
-                    this.log(`node id ${event.eventBody.nodeId} connected to cluster`);
+        if (!opperateAsMaster) {
+
+            this.wss.clients.forEach((client) => {
+                let userInfo = client.userInfo;
+                //  event.userInfo = { ...userInfo };
+                if (userInfo.sessionId && userInfo.sessionId === event.sessionId) {
+                    this.sendParsed(client, event)
                 }
+            })
+            switch (event.eventName) {
+                case "getUsersInSession":
+                    console.log("usersInSession incoming", event)
 
-                break;
-            case "usersInNode":
-                this.log("userRequestFromNodes")
+                    let users = []
+                    this.wss.clients.forEach((client) => {
+                        this.log(client.userInfo.sessionId)
+                        if (client.userInfo.sessionId == event.eventBody.sessionId) {
+                            if (client.readyState == 1) {
 
-                let users = []
-                this.wss.clients.forEach((client) => {
-                    this.log(client.userInfo.sessionId)
-                    if (client.userInfo.sessionId == event.eventBody.sessionId) {
-                        if (client.readyState == 1){
-
-                            users.push({ ...client.userInfo })
+                                users.push({ ...client.userInfo })
+                            }
                         }
+                    })
+                    this.publishToRedis("master-usersInMyNode", { nodeId: this.nodeId, users, sessionId: event.eventBody.sessionId }, true)
+                    break;
+                case "master-usersInSessionCompiled":
+                    console.log("usersInSessionCompiled incoming", event)
+                    if (this.state.userStatesRequests.queue.length > 0){
+                        this.state.userStatesRequests.queue.forEach((q,i)=>{
+                            q(event.eventBody.users);
+                            this.state.userStatesRequests.queue.splice(i,1);
+                        })
                     }
-                })
-                this.publishToRedis("usersInMyNode", { nodeId: this.nodeId, users }, true)
-                break;
-            case "usersInMyNode":
-                if (this.state.fetchingNodes) {
-                    this.log("usersInMyNode")
-                    let { nodeId } = event.eventBody;
-                    this.state.fetchedNodes[nodeId] = { ...event.eventBody };
-                }
-                break;
+            }
         }
 
+        if (opperateAsMaster) {
+            let { sessionId } = event.eventBody;
+            switch (event.eventName) {
+                case "nodeConnected":
+                    if (event.eventBody.nodeId !== this.nodeId) {
+                        this.log(`node id ${event.eventBody.nodeId} connected to cluster`);
+                    }
+
+                    break;
+                case "getUsersInSession":
+                    if (!this.state.fetchedSessions[sessionId]) {
+                        this.state.fetchedSessions[sessionId] = {
+                            uniqueNodes:{},
+                            nodes: [],
+                      
+                        }
+                    }
+                    this.compileAllUsersInSession(sessionId)
+
+                    break;
+                case "master-usersInMyNode":
+                    this.log("usersInMyNode")
+                    let { nodeId, users } = event.eventBody;
+                    if (this.state.fetchedSessions[sessionId]){
+
+                        if (!this.state.fetchedSessions[sessionId].uniqueNodes[nodeId]){
+                            this.state.fetchedSessions[sessionId].uniqueNodes[nodeId]= nodeId;
+                            this.state.fetchedSessions[sessionId].nodes.push({ nodeId, users })
+                        }
+                    }
+                    break;
+            }
+        }
     }
 
+    async compileAllUsersInSession(sessionId) {
+        if (!this.state.opperateAsMaster) return;
+        if (this.state.fetchedSessions[sessionId].running) return;
+        this.state.fetchedSessions[sessionId].running = true;
+        this.log("------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------")
+        let limiter = 0;
+        let compiledFinalList = [];
+        let maxNodes = 0;
+        longAsync = longAsync.bind(this);
+
+        maxNodes = Object.keys(this.state.nodeCluster).length
+        this.log(maxNodes)
+        longAsync();
+
+        async function longAsync() {
+            if (limiter > 100) {
+                delete this.state.fetchedSessions[sessionId]
+                this.log("failed to fetch all nodes on session users request....")
+                compiledFinalList = null;
+                return;
+            }
+
+            this.log("nodes in memory", this.state.fetchedSessions[sessionId])
+            this.log("max nodes count", maxNodes)
+            let fetched = this.state.fetchedSessions[sessionId].nodes.length;
+            this.log("fetched nodes", fetched)
+            if (fetched == maxNodes) {
+
+
+                this.state.fetchedSessions[sessionId].nodes.forEach((item) => {
+                    if (item.users.length>0){
+                        item.users.forEach((user)=>{
+                            compiledFinalList.push({...user})
+
+                        })
+
+                    }
+                })
+
+                
+                this.log("send out finallist", compiledFinalList)
+                this.publishToRedis("master-usersInSessionCompiled", { nodeId: this.nodeId, users: compiledFinalList }, true)
+                delete this.state.fetchedSessions[sessionId]
+                compiledFinalList = null;
+                return
+            } else {
+
+                setTimeout(() => {
+                    limiter++;
+                    longAsync();
+                }, 100)
+            }
+        }
+    }
     fetchStates() {
         return this.state;
     }
@@ -327,52 +427,43 @@ class BlueSocket extends Utils {
         return new Promise(async (resolve, reject) => {
             this.state.fetchingNodes = true;
             this.state.fetchedNodes = {}
-            let compiledFinalList = [];
-            let maxNodes = 0;
-            await this.publishToRedis("usersInNode", { masterAskNodeId: this.nodeId, sessionId }, true)
+            await this.publishToRedis("getUsersInSession", { sessionId }, true)
+            this.state.userStatesRequests.queue.push(resolve)
+
+
+            return
+            if (this.state.userStatesRequests[sessionId] && this.state.userStatesRequests[sessionId].waiting){
+                return
+            }
+            this.state.userStatesRequests[sessionId]= {
+                users:[],
+                waiting:true,
+            }
             //  resolve(["someone"])
-            let limiter = 0;
-            longAsync = longAsync.bind(this);
+            resolver = resolver.bind(this)
+            resolver();
+            function resolver(){
+                if (this.state.userStatesRequests[sessionId].waiting){
 
-            maxNodes = Object.keys(this.state.nodeCluster).length
-            this.log(maxNodes)
-            longAsync();
-
-            async function longAsync() {
-                let finished = false;
-                if (limiter > 60) {
-                    this.state.fetchingNodes = false;
-                    return;
-                }
-
-                this.log("nodes in memory", this.state.fetchedNodes)
-                this.log("max nodes count", maxNodes)
-                let fetched = Object.keys(this.state.fetchedNodes).length
-                if (fetched == maxNodes) {
-                    Object.keys(this.state.fetchedNodes).forEach((nod) => {
-                        if (this.state.fetchedNodes[nod].users.length > 0) {
-                            this.state.fetchedNodes[nod].users.forEach((user) => {
-                                compiledFinalList.push({ ...user })
-                            })
-                        }
-                    })
-                    resolve(compiledFinalList)
-                    return
-                } else {
-
-                    setTimeout(() => {
-                        limiter++;
-                        longAsync();
-                    }, 100)
                 }
             }
         })
 
     }
-
+    getNodesCurrentUniqueSessions(){
+        return new Promise(async (resolve, reject) => {
+            let sessions = [];
+            this.wss.clients.forEach((client) => {
+              
+                sessions.push(client.userInfo.sessionId);
+        
+            })
+            resolve(sessions)
+        }) 
+    }
     getSessionMeta(sessionId) {
-        let {pub} = this;
-     
+        let { pub } = this;
+
         return new Promise((resolve, reject) => {
             pub.get(`syncSessions-${sessionId}`, (e, data) => {
                 try {
@@ -411,7 +502,7 @@ class BlueSocket extends Utils {
                     }
                     if (!data) {
                         data = {
-                            metaData:{}
+                            metaData: {}
                         }
                     }
                     let update = { ...data }
@@ -421,7 +512,7 @@ class BlueSocket extends Utils {
                     })
                     this.log("session update", update)
                     pub.set(`syncSessions-${sessionId}`, JSON.stringify(update), 'EX', 60 * 60 * 24, () => {
-                      //  this.broadcastToSession("sessionInfo", { ...update }, { id: "SERVER", userInfo: { sessionId: sessionId } })
+                        //  this.broadcastToSession("sessionInfo", { ...update }, { id: "SERVER", userInfo: { sessionId: sessionId } })
 
                     })
 

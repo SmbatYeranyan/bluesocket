@@ -1,5 +1,6 @@
-import blueSocket from 'index.js';
-let fs = new blueSocket.FireSock();
+const FireSockets = require("./index").FireSockets;
+console.log(FireSockets)
+let fs = new FireSockets();
 fs.connect({ host: `ws://localhost:${process.argv[2]}`, reconnect: true }).then(() => {
 
 });

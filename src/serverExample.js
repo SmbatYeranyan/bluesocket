@@ -4,9 +4,9 @@ const fireSock = new BlueSocket({
     logging: true, 
     port: parseInt(process.argv[2]),
     redis: {
-        host: 'XXXXXX', // The redis's server ip 
-        port: 'XXXX',
-        auth_pass: 'XXX'
+        host: '35.224.93.13', // The redis's server ip 
+        port: '6379',
+        auth_pass: 'dha123SDJAhuwyad13'
     }
 });
 
