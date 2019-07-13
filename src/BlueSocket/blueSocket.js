@@ -340,7 +340,7 @@ class BlueSocket extends Utils {
 
             async function longAsync() {
                 let finished = false;
-                if (limiter > 5) {
+                if (limiter > 60) {
                     this.state.fetchingNodes = false;
                     return;
                 }
