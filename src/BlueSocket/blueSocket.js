@@ -6,6 +6,7 @@ class Utils {
         this.joinSession = this.joinSession.bind(this)
         this.leaveSession = this.leaveSession.bind(this)
         this.broadcastToSession = this.broadcastToSession.bind(this);
+        this.broadcastToMyNodesUsers = this.broadcastToMyNodesUsers.bind(this);
 
     }
     sendParsed(ws, obj) {
@@ -22,8 +23,8 @@ class Utils {
     setUserInfo(ws, ob) {
 
         Object.keys(ob).forEach((key) => {
-            ws.userInfo[key] = ob[key]
 
+            ws.userInfo[key] = ob[key]
         })
 
     }
@@ -53,7 +54,7 @@ class BlueSocket extends Utils {
             fetchedNodes: {},
             fetchedSessions: {},
             currentClients: {},
-            userStatesRequests:{queue:[]}
+            userStatesRequests: {  }
         }
         this.opts = { ...opts, defaults };
         if (this.opts.masterOnly) {
@@ -90,13 +91,22 @@ class BlueSocket extends Utils {
 
         this.subscribeToRedis();
     }
+    upgradeProtocol(request, socket, head) {
 
+        this.wss.handleUpgrade(request, socket, head, (ws) =>{
+            this.wss.emit('connection', ws, request);
+     
+        });
+
+    }
     _startListener(port) {
         if (this.state.opperateAsMaster) return;
         this.log(port)
-        let wss = new WebSocket.Server({ server: this.opts.httpServer });
+     //   let wss = new WebSocket.Server({ server: this.opts.httpServer });
+        let wss = new WebSocket.Server({ noServer: true  });
 
         wss.on('connection', async (ws) => {
+
             let userId = crypto.randomBytes(16).toString("hex");
             if (!this.state.currentClients[userId]) {
 
@@ -122,8 +132,8 @@ class BlueSocket extends Utils {
                 })
             }
             await this.publishToRedis("connected", { userId }, true)
-
         });
+
         this.wss = wss;
         this.log("starting wss service")
 
@@ -133,7 +143,7 @@ class BlueSocket extends Utils {
         ws.on('message', (message) => {
             this.log(ws.id)
             this.log('from client:', message);
-            if (message === "hb") {
+            if (message == "hb") {
                 ws.userInfo.hb = new Date().getTime()
                 // this._updateSessionInfoRedis(ws.userInfo.sessionId).users({...ws.userInfo})
             }
@@ -142,7 +152,7 @@ class BlueSocket extends Utils {
                     let event = JSON.parse(message)
                     //  this.publishToRedis(event.eventName, event.eventBody, false, ws)
                     Object.keys(this._eventLists).forEach((key) => {
-                        if (event.eventName === key) {
+                        if (event.eventName == key) {
 
                             this._eventLists[key].cbs.forEach((cb) => {
                                 cb(event, ws)
@@ -178,6 +188,16 @@ class BlueSocket extends Utils {
 
     broadcastToSession(eventName, eventObj, ws, directId) {
         this.publishToRedis(eventName, eventObj, false, ws, directId)
+    }
+    broadcastToMyNodesUsers(eventName, eventObj, sessionId) {
+        this.wss.clients.forEach((client) => {
+            let userInfo = client.userInfo;
+            //  event.userInfo = { ...userInfo };
+            console.log("------------------------------------------------------------------------",userInfo.sessionId, sessionId)
+            if (userInfo.sessionId && userInfo.sessionId == sessionId) {
+                this.emitToSocket(client, eventName,eventObj)
+            }
+        })
     }
 
     publishToRedis(event, obj, isInternal = false, ws, directId) {
@@ -280,20 +300,17 @@ class BlueSocket extends Utils {
             this.wss.clients.forEach((client) => {
                 let userInfo = client.userInfo;
                 //  event.userInfo = { ...userInfo };
-                if (userInfo.sessionId && userInfo.sessionId === event.sessionId) {
+                if (userInfo.sessionId && userInfo.sessionId == event.sessionId) {
                     this.sendParsed(client, event)
                 }
             })
             switch (event.eventName) {
                 case "getUsersInSession":
-                    console.log("usersInSession incoming", event)
-
                     let users = []
                     this.wss.clients.forEach((client) => {
                         this.log(client.userInfo.sessionId)
                         if (client.userInfo.sessionId == event.eventBody.sessionId) {
                             if (client.readyState == 1) {
-
                                 users.push({ ...client.userInfo })
                             }
                         }
@@ -301,13 +318,15 @@ class BlueSocket extends Utils {
                     this.publishToRedis("master-usersInMyNode", { nodeId: this.nodeId, users, sessionId: event.eventBody.sessionId }, true)
                     break;
                 case "master-usersInSessionCompiled":
-                    console.log("usersInSessionCompiled incoming", event)
-                    if (this.state.userStatesRequests.queue.length > 0){
-                        this.state.userStatesRequests.queue.forEach((q,i)=>{
+                    let sessionId = event.eventBody.sessionId;
+                    if (this.state.userStatesRequests[sessionId] && this.state.userStatesRequests[sessionId].queue.length > 0) {
+                        this.state.userStatesRequests[sessionId].queue.forEach((q, i) => {
                             q(event.eventBody.users);
-                            this.state.userStatesRequests.queue.splice(i,1);
+                            this.state.userStatesRequests[sessionId].queue.splice(i, 1);
                         })
+                        delete this.state.userStatesRequests[sessionId];
                     }
+                    break;
             }
         }
 
@@ -323,9 +342,9 @@ class BlueSocket extends Utils {
                 case "getUsersInSession":
                     if (!this.state.fetchedSessions[sessionId]) {
                         this.state.fetchedSessions[sessionId] = {
-                            uniqueNodes:{},
+                            uniqueNodes: {},
                             nodes: [],
-                      
+
                         }
                     }
                     this.compileAllUsersInSession(sessionId)
@@ -334,10 +353,10 @@ class BlueSocket extends Utils {
                 case "master-usersInMyNode":
                     this.log("usersInMyNode")
                     let { nodeId, users } = event.eventBody;
-                    if (this.state.fetchedSessions[sessionId]){
+                    if (this.state.fetchedSessions[sessionId]) {
 
-                        if (!this.state.fetchedSessions[sessionId].uniqueNodes[nodeId]){
-                            this.state.fetchedSessions[sessionId].uniqueNodes[nodeId]= nodeId;
+                        if (!this.state.fetchedSessions[sessionId].uniqueNodes[nodeId]) {
+                            this.state.fetchedSessions[sessionId].uniqueNodes[nodeId] = nodeId;
                             this.state.fetchedSessions[sessionId].nodes.push({ nodeId, users })
                         }
                     }
@@ -376,18 +395,18 @@ class BlueSocket extends Utils {
 
 
                 this.state.fetchedSessions[sessionId].nodes.forEach((item) => {
-                    if (item.users.length>0){
-                        item.users.forEach((user)=>{
-                            compiledFinalList.push({...user})
+                    if (item.users.length > 0) {
+                        item.users.forEach((user) => {
+                            compiledFinalList.push({ ...user })
 
                         })
 
                     }
                 })
 
-                
+
                 this.log("send out finallist", compiledFinalList)
-                this.publishToRedis("master-usersInSessionCompiled", { nodeId: this.nodeId, users: compiledFinalList }, true)
+                this.publishToRedis("master-usersInSessionCompiled", { sessionId: sessionId, nodeId: this.nodeId, users: compiledFinalList }, true)
                 delete this.state.fetchedSessions[sessionId]
                 compiledFinalList = null;
                 return
@@ -406,7 +425,7 @@ class BlueSocket extends Utils {
 
     joinSession(event, ws) {
         this.wss.clients.forEach((client) => {
-            if (client.id === ws.id) {
+            if (client.id == ws.id) {
                 this.state.currentClients[ws.id].sessionId = event.eventBody.sessionId;
                 client.userInfo.sessionId = event.eventBody.sessionId;
                 // this._updateSessionInfoRedis(client.userInfo.sessionId).users({ ...client.userInfo })
@@ -416,7 +435,7 @@ class BlueSocket extends Utils {
     }
     leaveSession(event, ws) {
         this.wss.clients.forEach((client) => {
-            if (client.id === ws.id) {
+            if (client.id == ws.id) {
                 this.state.currentClients[ws.id].sessionId = null;
                 client.userInfo.sessionId = null;
             }
@@ -425,41 +444,42 @@ class BlueSocket extends Utils {
 
     async getUsersInSession(sessionId) {
         return new Promise(async (resolve, reject) => {
-            this.state.fetchingNodes = true;
-            this.state.fetchedNodes = {}
-            await this.publishToRedis("getUsersInSession", { sessionId }, true)
-            this.state.userStatesRequests.queue.push(resolve)
 
+            await this.publishToRedis("getUsersInSession", { sessionId }, true)
+            if (!this.state.userStatesRequests[sessionId]){
+                this.state.userStatesRequests[sessionId] ={queue:[]}
+            }
+            this.state.userStatesRequests[sessionId].queue.push(resolve)
 
             return
-            if (this.state.userStatesRequests[sessionId] && this.state.userStatesRequests[sessionId].waiting){
+            if (this.state.userStatesRequests[sessionId] && this.state.userStatesRequests[sessionId].waiting) {
                 return
             }
-            this.state.userStatesRequests[sessionId]= {
-                users:[],
-                waiting:true,
+            this.state.userStatesRequests[sessionId] = {
+                users: [],
+                waiting: true,
             }
             //  resolve(["someone"])
             resolver = resolver.bind(this)
             resolver();
-            function resolver(){
-                if (this.state.userStatesRequests[sessionId].waiting){
+            function resolver() {
+                if (this.state.userStatesRequests[sessionId].waiting) {
 
                 }
             }
         })
 
     }
-    getNodesCurrentUniqueSessions(){
+    getNodesCurrentUniqueSessions() {
         return new Promise(async (resolve, reject) => {
             let sessions = [];
             this.wss.clients.forEach((client) => {
-              
+
                 sessions.push(client.userInfo.sessionId);
-        
+
             })
             resolve(sessions)
-        }) 
+        })
     }
     getSessionMeta(sessionId) {
         let { pub } = this;
@@ -510,7 +530,6 @@ class BlueSocket extends Utils {
                         update.metaData[key] = metaUpdate[key]
 
                     })
-                    this.log("session update", update)
                     pub.set(`syncSessions-${sessionId}`, JSON.stringify(update), 'EX', 60 * 60 * 24, () => {
                         //  this.broadcastToSession("sessionInfo", { ...update }, { id: "SERVER", userInfo: { sessionId: sessionId } })
 
