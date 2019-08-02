@@ -1,6 +1,8 @@
 const WebSocket = require('ws');
 const crypto = require("crypto");
 const redis = require("redis");
+const nameGenerator = require("../BlueSocket/nameGenerator");
+
 class Utils {
     constructor() {
         this.joinSession = this.joinSession.bind(this)
@@ -54,7 +56,8 @@ class BlueSocket extends Utils {
             fetchedNodes: {},
             fetchedSessions: {},
             currentClients: {},
-            userStatesRequests: {  }
+            userStatesRequests: {  },
+            sendOnceActions:{}
         }
         this.opts = { ...opts, defaults };
         if (this.opts.masterOnly) {
@@ -63,7 +66,9 @@ class BlueSocket extends Utils {
         this._startListener(this.opts.port);
         this._setupRedis();
     }
-
+    generateName(){
+        return nameGenerator.generate();
+    }
     onEvents(eventName, cb) {
         if (this._eventLists[eventName]) {
             this._eventLists[eventName].cbs.push(cb)
@@ -87,20 +92,40 @@ class BlueSocket extends Utils {
         this.sub = sub;
         redisClient.on("error", function (err) {
             this.log("Error " + err);
+            setTimeout(()=>{
+                this._setupRedis();
+            }, 60000)
         });
 
         this.subscribeToRedis();
     }
+    
     upgradeProtocol(request, socket, head) {
-
         this.wss.handleUpgrade(request, socket, head, (ws) =>{
             this.wss.emit('connection', ws, request);
      
         });
 
     }
+
+    _startSendOnceClock(){
+        this._sendOnceClock = setInterval(()=>{
+            let lengthOfActions = Object.keys(this.state.sendOnceActions).length;
+            while (lengthOfActions--) {
+                let sendOnceActions = Object.keys(this.state.sendOnceActions)[lengthOfActions];
+                let sendOnceActionsObj = this.state.sendOnceActions[sendOnceActions];
+                if (sendOnceActionsObj.ts + sendOnceActionsObj.timeout < new Date().getTime()){
+                    delete this.state.sendOnceActions[sendOnceActions]
+                }
+            }
+        }, 500)
+    }
     _startListener(port) {
-        if (this.state.opperateAsMaster) return;
+        if (this.state.opperateAsMaster) {
+            this._startSendOnceClock();
+            return;
+        };
+ 
         this.log(port)
      //   let wss = new WebSocket.Server({ server: this.opts.httpServer });
         let wss = new WebSocket.Server({ noServer: true  });
@@ -124,7 +149,7 @@ class BlueSocket extends Utils {
             this.sendParsed(ws, {
 
                 eventName: "connected",
-                eventBody: { userId: userId }
+                eventBody: { userId: userId , optionalId:this.generateName()}
             })
             if (this._eventLists["connected"]) {
                 this._eventLists["connected"].cbs.forEach((cb) => {
@@ -317,6 +342,19 @@ class BlueSocket extends Utils {
                     })
                     this.publishToRedis("master-usersInMyNode", { nodeId: this.nodeId, users, sessionId: event.eventBody.sessionId }, true)
                     break;
+                case "slave-sendOnce":
+                    this.wss.clients.forEach((client) => {
+                        this.log(client.userInfo.sessionId)
+                        this.log("send once to", event.eventBody)
+                        if (client.userInfo.sessionId == event.eventBody.sessionId) {
+                            if (client.readyState == 1) {
+                    
+                               this.emitToSocket(client, event.eventBody.topic, {...event.eventBody.msg})
+                            }
+                        }
+                    })
+           
+                    break;
                 case "master-usersInSessionCompiled":
                     let sessionId = event.eventBody.sessionId;
                     if (this.state.userStatesRequests[sessionId] && this.state.userStatesRequests[sessionId].queue.length > 0) {
@@ -331,7 +369,8 @@ class BlueSocket extends Utils {
         }
 
         if (opperateAsMaster) {
-            let { sessionId } = event.eventBody;
+            
+            let { nodeId, users, topic, sessionId } = event.eventBody;
             switch (event.eventName) {
                 case "nodeConnected":
                     if (event.eventBody.nodeId !== this.nodeId) {
@@ -352,13 +391,32 @@ class BlueSocket extends Utils {
                     break;
                 case "master-usersInMyNode":
                     this.log("usersInMyNode")
-                    let { nodeId, users } = event.eventBody;
                     if (this.state.fetchedSessions[sessionId]) {
 
                         if (!this.state.fetchedSessions[sessionId].uniqueNodes[nodeId]) {
                             this.state.fetchedSessions[sessionId].uniqueNodes[nodeId] = nodeId;
                             this.state.fetchedSessions[sessionId].nodes.push({ nodeId, users })
                         }
+                    }
+                    break;
+                case "master-sendOnce":
+                    this.log("sendOnce", sessionId)
+                    let {msg, opts } = event.eventBody
+                    if (this.state.sendOnceActions[`${sessionId}-${topic}`]) {
+                        let sendOnceObj = this.state.sendOnceActions[`${sessionId}-${topic}`];
+                        
+                        this.log("sendOnce already exists")
+                        this.log(JSON.stringify(this.state.sendOnceActions))
+                        return;
+                    }else{
+                        this.state.sendOnceActions[`${sessionId}-${topic}`] = {
+                            ts: new Date().getTime(),
+                            timeout: opts.timeout,
+                            msg: {...msg}
+                        }
+                        this.publishToRedis("slave-sendOnce", { sessionId: sessionId, topic, msg }, true)
+
+
                     }
                     break;
             }
@@ -442,6 +500,11 @@ class BlueSocket extends Utils {
         })
     }
 
+    async sendOnce(topic,sessionId,  opts = {timeout: 1000}, msg){
+        this.publishToRedis("master-sendOnce", { nodeId: this.nodeId, topic, sessionId, msg, opts}, true)
+
+    }
+
     async getUsersInSession(sessionId) {
         return new Promise(async (resolve, reject) => {
 
@@ -451,22 +514,22 @@ class BlueSocket extends Utils {
             }
             this.state.userStatesRequests[sessionId].queue.push(resolve)
 
-            return
-            if (this.state.userStatesRequests[sessionId] && this.state.userStatesRequests[sessionId].waiting) {
-                return
-            }
-            this.state.userStatesRequests[sessionId] = {
-                users: [],
-                waiting: true,
-            }
-            //  resolve(["someone"])
-            resolver = resolver.bind(this)
-            resolver();
-            function resolver() {
-                if (this.state.userStatesRequests[sessionId].waiting) {
+            // return
+            // if (this.state.userStatesRequests[sessionId] && this.state.userStatesRequests[sessionId].waiting) {
+            //     return
+            // }
+            // this.state.userStatesRequests[sessionId] = {
+            //     users: [],
+            //     waiting: true,
+            // }
+            // //  resolve(["someone"])
+            // resolver = resolver.bind(this)
+            // resolver();
+            // function resolver() {
+            //     if (this.state.userStatesRequests[sessionId].waiting) {
 
-                }
-            }
+            //     }
+            // }
         })
 
     }
